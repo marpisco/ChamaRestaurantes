@@ -1,5 +1,5 @@
 import Groq from 'groq-sdk';
-import { toFile } from 'groq-sdk';
+import { toFile } from 'groq-sdk/uploads';
 import config from '../config';
 import { buildWav } from '../audio/codec';
 

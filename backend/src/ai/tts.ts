@@ -9,12 +9,13 @@ const groq = new Groq({ apiKey: config.groq.apiKey });
  * Returns a Buffer ready to pass to RtpHandler.sendPcm().
  */
 export async function synthesise(text: string): Promise<Buffer> {
-  const response = await groq.audio.speech.create({
+  const response = await (groq.audio.speech as unknown as {
+    create(params: Record<string, unknown>): Promise<{ arrayBuffer(): Promise<ArrayBuffer> }>;
+  }).create({
     model: 'playai-tts',
     input: text,
-    voice: config.groq.ttsVoice as Parameters<typeof groq.audio.speech.create>[0]['voice'],
+    voice: config.groq.ttsVoice,
     response_format: 'wav',
-    // @ts-ignore – speed is a valid param not yet reflected in types
     speed: 1.0,
   });
 
@@ -23,14 +24,12 @@ export async function synthesise(text: string): Promise<Buffer> {
 
   const { sampleRate, pcm } = parseWav(buf);
 
-  // Downsample to 8kHz for RTP/G.711
   if (sampleRate === 8000) return pcm;
 
   if (sampleRate % 8000 === 0) {
     return downsample(pcm, sampleRate, 8000);
   }
 
-  // Fallback: manual linear interpolation for non-integer ratios
   return resampleLinear(pcm, sampleRate, 8000);
 }
 
