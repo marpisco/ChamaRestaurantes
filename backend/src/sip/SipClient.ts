@@ -54,9 +54,10 @@ export class SipClient extends EventEmitter {
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.socket.bind(config.sip.localPort, config.sip.localIp, (err) => {
-        if (err) reject(err);
-        else resolve();
+      this.socket.once('error', reject);
+      this.socket.bind(config.sip.localPort, config.sip.localIp, () => {
+        this.socket.off('error', reject);
+        resolve();
       });
     });
   }

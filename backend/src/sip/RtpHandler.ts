@@ -40,8 +40,9 @@ export class RtpHandler extends EventEmitter {
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.socket.bind(this.localPort, (err) => {
-        if (err) { reject(err); return; }
+      this.socket.once('error', reject);
+      this.socket.bind(this.localPort, () => {
+        this.socket.off('error', reject);
         this.socket.on('message', (buf) => this.onPacket(buf));
         resolve();
       });
@@ -133,14 +134,14 @@ export class RtpHandler extends EventEmitter {
   static async allocatePort(start = 16000): Promise<number> {
     return new Promise((resolve, reject) => {
       const sock = dgram.createSocket('udp4');
-      sock.bind(start % 2 === 0 ? start : start + 1, (err) => {
-        if (err) {
-          sock.close();
-          RtpHandler.allocatePort(start + 2).then(resolve).catch(reject);
-        } else {
-          const { port } = sock.address();
-          sock.close(() => resolve(port));
-        }
+      const candidate = start % 2 === 0 ? start : start + 1;
+      sock.once('error', () => {
+        sock.close();
+        RtpHandler.allocatePort(start + 2).then(resolve).catch(reject);
+      });
+      sock.bind(candidate, () => {
+        const { port } = sock.address() as { port: number };
+        sock.close(() => resolve(port));
       });
     });
   }
