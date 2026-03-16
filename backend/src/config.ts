@@ -24,11 +24,8 @@ const config = {
   },
   groq: {
     apiKey: require('GROQ_API_KEY'),
-  },
-  openai: {
-    apiKey: require('OPENAI_API_KEY'),
-    ttsModel: optional('OPENAI_TTS_MODEL', 'tts-1'),
-    ttsVoice: optional('OPENAI_TTS_VOICE', 'nova'),
+    ttsModel: optional('GROQ_TTS_MODEL', 'canopylabs/orpheus-v1-english'),
+    ttsVoice: optional('GROQ_TTS_VOICE', 'diana'),
   },
   port: parseInt(optional('PORT', '3000')),
 };
