@@ -262,27 +262,27 @@ export class SipClient extends EventEmitter {
 
   private handleRequest(text: string): void {
     const firstLine = text.split('\r\n')[0];
-    if (firstLine.startsWith('BYE ')) {
-      // Reply 200 OK then emit event
-      const headers = this.parseHeaders(text);
-      const via = headers.get('via') ?? '';
-      const callId = headers.get('call-id') ?? '';
-      const cseq = headers.get('cseq') ?? '';
+    const headers = this.parseHeaders(text);
 
+    // Always reply 200 OK to BYE and NOTIFY; ignore everything else
+    if (firstLine.startsWith('BYE ') || firstLine.startsWith('NOTIFY ')) {
       const response = [
         'SIP/2.0 200 OK',
-        `Via: ${via}`,
+        `Via: ${headers.get('via') ?? ''}`,
         `From: ${headers.get('from') ?? ''}`,
         `To: ${headers.get('to') ?? ''}`,
-        `Call-ID: ${callId}`,
-        `CSeq: ${cseq}`,
+        `Call-ID: ${headers.get('call-id') ?? ''}`,
+        `CSeq: ${headers.get('cseq') ?? ''}`,
         'Content-Length: 0',
         '',
         '',
       ].join('\r\n');
 
       this.send(response);
-      this.emit('remote_bye');
+
+      if (firstLine.startsWith('BYE ')) {
+        this.emit('remote_bye');
+      }
     }
   }
 
