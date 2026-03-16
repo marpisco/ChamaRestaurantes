@@ -24,6 +24,8 @@ export interface CallRecord {
   transcript: TranscriptLine[];
   result?: CallResult;
   error?: string;
+  /** Call this to hang up the active call (triggers SIP BYE). */
+  hangup?: () => void;
 }
 
 export interface TranscriptLine {

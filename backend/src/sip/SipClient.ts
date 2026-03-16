@@ -40,9 +40,12 @@ export class SipClient extends EventEmitter {
   private fromTag: string;
   private toTag = '';
   private pending = new Map<string, PendingRequest>();
+  private localPort: number;
 
-  constructor() {
+  /** Pass localPort=0 to let the OS pick a free port (avoids EADDRINUSE). */
+  constructor(localPort = 0) {
     super();
+    this.localPort = localPort;
     this.socket = dgram.createSocket('udp4');
     this.callId = this.newCallId();
     this.fromTag = this.randomHex(6);
@@ -55,9 +58,10 @@ export class SipClient extends EventEmitter {
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.socket.once('error', reject);
-      // Bind to all interfaces so we receive responses regardless of routing
-      this.socket.bind(config.sip.localPort, () => {
+      // port=0 → OS picks a free ephemeral port; bind to all interfaces
+      this.socket.bind(this.localPort, () => {
         this.socket.off('error', reject);
+        this.localPort = (this.socket.address() as { port: number }).port;
         resolve();
       });
     });
@@ -188,18 +192,19 @@ export class SipClient extends EventEmitter {
     headers: Record<string, string> = {},
     body = '',
   ): string {
-    const { username, host, localIp, localPort } = config.sip;
+    const { username, host, localIp } = config.sip;
+    const port = this.localPort; // actual bound port (may differ from config)
     const toUri = method === 'REGISTER' ? `sip:${username}@${host}` : uri;
     const toTag = this.toTag ? `;tag=${this.toTag}` : '';
 
     const lines = [
       `${method} ${uri} SIP/2.0`,
-      `Via: SIP/2.0/UDP ${localIp}:${localPort};branch=${branch};rport`,
+      `Via: SIP/2.0/UDP ${localIp}:${port};branch=${branch};rport`,
       `From: <sip:${username}@${host}>;tag=${this.fromTag}`,
       `To: <${toUri}>${toTag}`,
       `Call-ID: ${this.callId}`,
       `CSeq: ${this.cseq++} ${method}`,
-      `Contact: <sip:${username}@${localIp}:${localPort}>`,
+      `Contact: <sip:${username}@${localIp}:${port}>`,
       `Max-Forwards: 70`,
       `User-Agent: ChamaRestaurantes/1.0`,
     ];
