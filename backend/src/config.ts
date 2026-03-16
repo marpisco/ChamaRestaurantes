@@ -24,7 +24,8 @@ const config = {
   },
   groq: {
     apiKey: require('GROQ_API_KEY'),
-    ttsVoice: optional('GROQ_TTS_VOICE', 'Valentina-PlayAI'),
+    ttsModel: optional('GROQ_TTS_MODEL', 'canopylabs/orpheus-v1-english'),
+    ttsVoice: optional('GROQ_TTS_VOICE', 'tara'),
   },
   port: parseInt(optional('PORT', '3000')),
 };
