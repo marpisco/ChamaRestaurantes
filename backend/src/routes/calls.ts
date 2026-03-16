@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import config from '../config';
 import { v4 as uuidv4 } from 'uuid';
 import WebSocket, { WebSocketServer } from 'ws';
 import { SipClient } from '../sip/SipClient';
@@ -50,11 +51,13 @@ export function buildCallsRouter(wss: WebSocketServer): Router {
 
     // Run the call asynchronously
     runCall(id, record, wss).catch((err) => {
+      const message = (err as Error).message ?? String(err);
+      console.error(`[call ${id}] FALHA:`, message);
       const call = calls.get(id)!;
       call.status = 'failed';
-      call.error = (err as Error).message;
+      call.error = message;
       call.endedAt = new Date();
-      broadcast(wss, { type: 'call.status', callId: id, payload: { status: 'failed', error: call.error } });
+      broadcast(wss, { type: 'call.status', callId: id, payload: { status: 'failed', error: message } });
     });
   });
 
@@ -98,18 +101,23 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
 
   try {
     // 1. Bind SIP + RTP sockets
+    console.log(`[call ${id}] a ligar sockets (SIP local :${config.sip.localPort}, RTP :${rtpPort})`);
     setStatus('registering');
     await sip.start();
     await rtp.start();
 
     // 2. Register SIP extension
+    console.log(`[call ${id}] a registar extensão ${config.sip.username}@${config.sip.host}`);
     await sip.register();
+    console.log(`[call ${id}] REGISTER OK`);
 
     // 3. Initiate call
+    console.log(`[call ${id}] INVITE → ${record.phone}`);
     setStatus('calling');
-    sip.on('ringing', () => setStatus('ringing'));
+    sip.on('ringing', () => { console.log(`[call ${id}] a tocar`); setStatus('ringing'); });
 
     const sdp = await sip.invite(record.phone, rtpPort);
+    console.log(`[call ${id}] chamada atendida, RTP remoto: ${sdp.ip}:${sdp.port}`);
     rtp.setRemote(sdp.ip, sdp.port);
 
     // 4. Handle remote hang-up

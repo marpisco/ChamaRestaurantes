@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 
 export type WsEvent =
-  | { type: 'call.status'; callId: string; payload: { status: string; error?: string } }
+  | { type: 'call.status'; callId: string; payload: { status: string; error?: string; } }
   | { type: 'transcript'; callId: string; payload: { speaker: 'agent' | 'restaurant'; text: string; timestamp: string } }
   | { type: 'call.result'; callId: string; payload: { success: boolean; summary: string } }
   | { type: 'audio.chunk'; callId: string; payload: ArrayBuffer };

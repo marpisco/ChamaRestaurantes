@@ -8,6 +8,7 @@ interface ActiveCall {
   status: CallStatus;
   transcript: TranscriptEntry[];
   result?: { success: boolean; summary: string };
+  error?: string;
 }
 
 export default function App() {
@@ -20,7 +21,7 @@ export default function App() {
       if (event.callId !== prev.id) return prev;
 
       if (event.type === 'call.status') {
-        return { ...prev, status: event.payload.status as CallStatus };
+        return { ...prev, status: event.payload.status as CallStatus, error: event.payload.error };
       }
       if (event.type === 'transcript') {
         return { ...prev, transcript: [...prev.transcript, event.payload as TranscriptEntry] };
@@ -73,6 +74,7 @@ export default function App() {
               status={activeCall.status}
               transcript={activeCall.transcript}
               result={activeCall.result}
+              error={activeCall.error}
               playAudio={playAudio}
               onToggleAudio={() => setPlayAudio((p) => !p)}
               onHangUp={handleHangUp}
