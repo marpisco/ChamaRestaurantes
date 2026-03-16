@@ -42,7 +42,10 @@ export function useCallStream(onEvent: EventHandler, playAudio: boolean) {
   }, [playAudio]);
 
   useEffect(() => {
-    const url = `ws://${window.location.hostname}:${window.location.port}/ws`;
+    // In dev, connect directly to the backend to avoid Vite's WS proxy issues with binary frames.
+    // VITE_WS_URL is set in .env.development; in production the build serves everything together.
+    const url = import.meta.env.VITE_WS_URL ||
+      `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.binaryType = 'arraybuffer';
