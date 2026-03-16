@@ -15,6 +15,7 @@ interface Props {
   status: CallStatus;
   transcript: TranscriptEntry[];
   result?: { success: boolean; summary: string };
+  error?: string;
   playAudio: boolean;
   onToggleAudio: () => void;
   onHangUp: () => void;
@@ -41,7 +42,7 @@ const STATUS_COLOR: Record<CallStatus, string> = {
 };
 
 export default function LiveMonitor({
-  callId, status, transcript, result, playAudio, onToggleAudio, onHangUp,
+  callId, status, transcript, result, error, playAudio, onToggleAudio, onHangUp,
 }: Props) {
   const isActive = status === 'calling' || status === 'ringing' || status === 'connected';
 
@@ -74,6 +75,13 @@ export default function LiveMonitor({
 
       {/* Call ID */}
       <p className="text-xs text-gray-400 font-mono truncate">ID: {callId}</p>
+
+      {/* Error banner */}
+      {error && (
+        <div className="rounded-lg px-4 py-3 text-sm font-mono bg-red-50 text-red-700 break-all">
+          ⚠️ {error}
+        </div>
+      )}
 
       {/* Result banner */}
       {result && (
