@@ -55,7 +55,8 @@ export class SipClient extends EventEmitter {
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.socket.once('error', reject);
-      this.socket.bind(config.sip.localPort, config.sip.localIp, () => {
+      // Bind to all interfaces so we receive responses regardless of routing
+      this.socket.bind(config.sip.localPort, () => {
         this.socket.off('error', reject);
         resolve();
       });
@@ -68,17 +69,34 @@ export class SipClient extends EventEmitter {
 
   // ─── Public SIP operations ────────────────────────────────────────────────
 
+  /**
+   * Attempt SIP REGISTER. If the PBX doesn't respond (timeout) or returns
+   * 403/404, skip silently — many PBX have pre-configured extensions that
+   * don't require registration before accepting outbound INVITEs.
+   */
   async register(): Promise<void> {
     const uri = `sip:${config.sip.host}`;
     const branch = this.newBranch();
     this.send(this.buildMessage('REGISTER', uri, branch, { 'Expires': '3600' }));
 
-    const res = await this.waitFor(branch);
+    let res: ParsedResponse;
+    try {
+      res = await this.waitFor(branch, 5_000); // short timeout for REGISTER
+    } catch {
+      console.warn('[SipClient] REGISTER sem resposta — a continuar sem registo (extensão pré-configurada?)');
+      return;
+    }
 
     if (res.statusCode === 401 || res.statusCode === 407) {
-      await this.sendWithAuth('REGISTER', uri, res, '');
-    } else if (res.statusCode !== 200) {
-      throw new Error(`REGISTER ${res.statusCode} ${res.reason}`);
+      try {
+        await this.sendWithAuth('REGISTER', uri, res, '');
+      } catch (err) {
+        console.warn('[SipClient] REGISTER auth falhou, a tentar sem registo:', (err as Error).message);
+      }
+    } else if (res.statusCode === 200) {
+      // registered OK
+    } else {
+      console.warn(`[SipClient] REGISTER ${res.statusCode} ${res.reason} — a continuar sem registo`);
     }
   }
 
