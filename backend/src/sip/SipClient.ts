@@ -232,6 +232,8 @@ export class SipClient extends EventEmitter {
   // ─── Message receiving ────────────────────────────────────────────────────
 
   private onMessage(text: string): void {
+    const firstLine = text.split('\r\n')[0];
+    console.debug(`[SIP ←] ${firstLine}`);
     if (text.startsWith('SIP/2.0')) {
       this.handleResponse(text);
     } else {
@@ -360,6 +362,8 @@ export class SipClient extends EventEmitter {
   // ─── Transport ────────────────────────────────────────────────────────────
 
   private send(msg: string): void {
+    const firstLine = msg.split('\r\n')[0];
+    console.debug(`[SIP →] ${firstLine}`);
     const buf = Buffer.from(msg);
     this.socket.send(buf, config.sip.port, config.sip.host);
   }
