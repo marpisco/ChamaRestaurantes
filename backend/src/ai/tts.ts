@@ -12,11 +12,10 @@ export async function synthesise(text: string): Promise<Buffer> {
   const response = await (groq.audio.speech as unknown as {
     create(params: Record<string, unknown>): Promise<{ arrayBuffer(): Promise<ArrayBuffer> }>;
   }).create({
-    model: 'playai-tts',
+    model: config.groq.ttsModel,
     input: text,
     voice: config.groq.ttsVoice,
     response_format: 'wav',
-    speed: 1.0,
   });
 
   const arrayBuf = await response.arrayBuffer();
