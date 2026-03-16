@@ -77,10 +77,8 @@ export function buildCallsRouter(wss: WebSocketServer): Router {
   router.delete('/:id', (req, res) => {
     const call = calls.get(req.params.id);
     if (!call) return res.status(404).json({ error: 'Not found' });
-    call.status = 'ended';
-    call.endedAt = new Date();
+    call.hangup?.(); // triggers BYE + cleanup via the runCall finally block
     res.json({ ok: true });
-    broadcast(wss, { type: 'call.status', callId: req.params.id, payload: { status: 'ended' } });
   });
 
   return router;
@@ -95,13 +93,32 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     emit({ type: 'call.status', callId: id, payload: { status } });
   };
 
-  const sip = new SipClient();
+  // SIP port 0 → OS assigns a free ephemeral port (avoids EADDRINUSE)
+  const sip = new SipClient(0);
   const rtpPort = await RtpHandler.allocatePort();
   const rtp = new RtpHandler(rtpPort);
+  let pipeline: AudioPipeline | null = null;
+
+  // Promise that resolves when the call should end (any reason)
+  let resolveCall!: () => void;
+  const callEnded = new Promise<void>((r) => { resolveCall = r; });
+
+  const endCall = (result?: CallRecord['result']) => {
+    if (record.status === 'ended') return;
+    if (result) record.result = result;
+    record.endedAt = new Date();
+    setStatus('ended');
+    if (result) emit({ type: 'call.result', callId: id, payload: result });
+    pipeline?.stop();
+    resolveCall();
+  };
+
+  // Expose hangup so DELETE /api/calls/:id can trigger it
+  record.hangup = () => endCall();
 
   try {
     // 1. Bind SIP + RTP sockets
-    console.log(`[call ${id}] a ligar sockets (SIP local :${config.sip.localPort}, RTP :${rtpPort})`);
+    console.log(`[call ${id}] a ligar sockets (RTP :${rtpPort})`);
     setStatus('registering');
     await sip.start();
     await rtp.start();
@@ -119,23 +136,16 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     const sdp = await sip.invite(record.phone, rtpPort);
     console.log(`[call ${id}] chamada atendida, RTP remoto: ${sdp.ip}:${sdp.port}`);
     rtp.setRemote(sdp.ip, sdp.port);
-
-    // 4. Handle remote hang-up
-    sip.once('remote_bye', () => {
-      pipeline.stop();
-      record.endedAt = new Date();
-      setStatus('ended');
-      emit({
-        type: 'call.result',
-        callId: id,
-        payload: { success: false, summary: 'O restaurante desligou a chamada.' },
-      });
-    });
-
     setStatus('connected');
 
-    // 5. Start audio pipeline
-    const pipeline = new AudioPipeline(rtp, record.people, record.preOrder);
+    // 4. Remote hang-up
+    sip.once('remote_bye', () => {
+      console.log(`[call ${id}] restaurante desligou`);
+      endCall({ success: false, summary: 'O restaurante desligou a chamada.' });
+    });
+
+    // 5. Audio pipeline
+    pipeline = new AudioPipeline(rtp, record.people, record.preOrder);
 
     pipeline.on('transcript', (line) => {
       record.transcript.push(line);
@@ -146,18 +156,13 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
       emit({ type: 'audio.chunk', callId: id, payload: pcm });
     });
 
-    pipeline.on('outcome', async (outcome: 'confirmed' | 'rejected') => {
-      const success = outcome === 'confirmed';
-      const summary = success
-        ? `Reserva confirmada para ${record.people} pessoas.`
-        : 'Restaurante não pôde aceitar a reserva.';
-
-      record.result = { success, summary };
-      record.endedAt = new Date();
-
-      await sip.bye();
-      setStatus('ended');
-      emit({ type: 'call.result', callId: id, payload: record.result });
+    pipeline.on('outcome', (outcome: 'confirmed' | 'rejected') => {
+      endCall({
+        success: outcome === 'confirmed',
+        summary: outcome === 'confirmed'
+          ? `Reserva confirmada para ${record.people} pessoas.`
+          : 'Restaurante não pôde aceitar a reserva.',
+      });
     });
 
     pipeline.on('error', (err: Error) => {
@@ -166,9 +171,15 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
 
     await pipeline.start();
 
-  } catch (err) {
+    // Wait here until the call ends (hangup, remote BYE, or outcome)
+    await callEnded;
+
+  } finally {
+    // Always clean up SIP + RTP sockets when the call ends for any reason
+    record.hangup = undefined;
+    await sip.bye().catch(() => {});
     sip.destroy();
     rtp.destroy();
-    throw err;
+    console.log(`[call ${id}] sockets fechados`);
   }
 }

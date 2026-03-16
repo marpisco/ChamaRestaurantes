@@ -73,8 +73,8 @@ export function buildWav(pcm: Buffer, sampleRate = 8000, channels = 1, bitsPerSa
 }
 
 /**
- * Parse WAV file, return sample rate and raw 16-bit LE PCM.
- * Supports PCM (format 1) only.
+ * Parse WAV file, return sample rate and raw 16-bit LE PCM (mono).
+ * Handles stereo by mixing L+R to mono.
  */
 export function parseWav(buf: Buffer): { sampleRate: number; pcm: Buffer } {
   if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') {
@@ -83,37 +83,72 @@ export function parseWav(buf: Buffer): { sampleRate: number; pcm: Buffer } {
 
   let offset = 12;
   let sampleRate = 0;
-  let pcm: Buffer | null = null;
+  let channels = 1;
+  let bitsPerSample = 16;
+  let pcmRaw: Buffer | null = null;
 
   while (offset + 8 <= buf.length) {
     const id = buf.toString('ascii', offset, offset + 4);
     const size = buf.readUInt32LE(offset + 4);
     if (id === 'fmt ') {
+      channels = buf.readUInt16LE(offset + 10);
       sampleRate = buf.readUInt32LE(offset + 12);
+      bitsPerSample = buf.readUInt16LE(offset + 22);
     } else if (id === 'data') {
-      pcm = buf.subarray(offset + 8, offset + 8 + size);
+      pcmRaw = buf.subarray(offset + 8, offset + 8 + size);
     }
     offset += 8 + size;
-    if (pcm && sampleRate) break;
+    if (pcmRaw && sampleRate) break;
   }
 
-  if (!sampleRate || !pcm) throw new Error('Malformed WAV file');
-  return { sampleRate, pcm };
+  if (!sampleRate || !pcmRaw) throw new Error('Malformed WAV file');
+  console.debug(`[WAV] ${sampleRate}Hz, ${channels}ch, ${bitsPerSample}bit, ${pcmRaw.length} bytes`);
+
+  // Ensure 16-bit (convert 32-bit float if needed — some TTS outputs f32)
+  let pcm16 = pcmRaw;
+  if (bitsPerSample === 32) {
+    const samples = pcmRaw.length >> 2;
+    pcm16 = Buffer.allocUnsafe(samples * 2);
+    for (let i = 0; i < samples; i++) {
+      pcm16.writeInt16LE(Math.round(pcmRaw.readFloatLE(i * 4) * 32767), i * 2);
+    }
+  }
+
+  // Mix stereo → mono
+  if (channels === 2) {
+    const monoSamples = pcm16.length >> 2;
+    const mono = Buffer.allocUnsafe(monoSamples * 2);
+    for (let i = 0; i < monoSamples; i++) {
+      const l = pcm16.readInt16LE(i * 4);
+      const r = pcm16.readInt16LE(i * 4 + 2);
+      mono.writeInt16LE(Math.round((l + r) / 2), i * 2);
+    }
+    return { sampleRate, pcm: mono };
+  }
+
+  return { sampleRate, pcm: pcm16 };
 }
 
 /**
- * Downsample 16-bit LE PCM from srcRate to dstRate using linear decimation.
- * Only supports integer ratios (srcRate must be divisible by dstRate).
+ * Downsample 16-bit LE PCM from srcRate to dstRate using box averaging.
+ * Works with any ratio (integer or not).
  */
 export function downsample(pcm: Buffer, srcRate: number, dstRate: number): Buffer {
   if (srcRate === dstRate) return pcm;
-  if (srcRate % dstRate !== 0) throw new Error(`Cannot downsample ${srcRate}→${dstRate}: non-integer ratio`);
   const ratio = srcRate / dstRate;
   const srcSamples = pcm.length >> 1;
   const dstSamples = Math.floor(srcSamples / ratio);
   const out = Buffer.allocUnsafe(dstSamples * 2);
   for (let i = 0; i < dstSamples; i++) {
-    out.writeInt16LE(pcm.readInt16LE(i * ratio * 2), i * 2);
+    const start = i * ratio;
+    const end = start + ratio;
+    let sum = 0;
+    let count = 0;
+    for (let j = Math.floor(start); j < Math.ceil(end) && j < srcSamples; j++) {
+      sum += pcm.readInt16LE(j * 2);
+      count++;
+    }
+    out.writeInt16LE(Math.round(sum / count), i * 2);
   }
   return out;
 }
