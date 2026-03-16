@@ -42,6 +42,11 @@ export class SipClient extends EventEmitter {
   private pending = new Map<string, PendingRequest>();
   private localPort: number;
 
+  // Session state — set after INVITE succeeds, used for re-INVITE refresh
+  private sessionUri = '';
+  private sessionRtpPort = 0;
+  private refreshTimer: NodeJS.Timeout | null = null;
+
   /** Pass localPort=0 to let the OS pick a free port (avoids EADDRINUSE). */
   constructor(localPort = 0) {
     super();
@@ -111,11 +116,17 @@ export class SipClient extends EventEmitter {
    */
   async invite(destination: string, localRtpPort: number): Promise<SdpInfo> {
     const uri = `sip:${destination}@${config.sip.host}`;
+    this.sessionUri = uri;
+    this.sessionRtpPort = localRtpPort;
+
     const sdp = this.buildSdp(localRtpPort);
     const branch = this.newBranch();
 
     this.send(this.buildMessage('INVITE', uri, branch, {
       'Content-Type': 'application/sdp',
+      'Supported': 'timer',
+      'Session-Expires': '1800;refresher=uac',
+      'Min-SE': '90',
     }, sdp));
 
     const res = await this.waitFor(branch, 90_000);
@@ -130,11 +141,13 @@ export class SipClient extends EventEmitter {
 
     this.captureToTag(res);
     this.sendAck(uri);
+    this.setupSessionRefresh(res, uri, localRtpPort);
     return this.parseSdp(res.body);
   }
 
   async bye(): Promise<void> {
-    const uri = `sip:${config.sip.host}`;
+    if (this.refreshTimer) { clearTimeout(this.refreshTimer); this.refreshTimer = null; }
+    const uri = this.sessionUri || `sip:${config.sip.host}`;
     const branch = this.newBranch();
     this.send(this.buildMessage('BYE', uri, branch));
   }
@@ -145,12 +158,57 @@ export class SipClient extends EventEmitter {
     const sdp = this.buildSdp(localRtpPort);
     const res = await this.sendWithAuth('INVITE', uri, challengeRes, sdp, {
       'Content-Type': 'application/sdp',
+      'Supported': 'timer',
+      'Session-Expires': '1800;refresher=uac',
+      'Min-SE': '90',
     });
 
     if (res.statusCode !== 200) throw new Error(`INVITE (auth) ${res.statusCode} ${res.reason}`);
     this.captureToTag(res);
     this.sendAck(uri);
+    this.setupSessionRefresh(res, uri, localRtpPort);
     return this.parseSdp(res.body);
+  }
+
+  /** Parse Session-Expires from 200 OK and schedule re-INVITE if we are the refresher. */
+  private setupSessionRefresh(res: ParsedResponse, uri: string, rtpPort: number): void {
+    const se = res.headers.get('session-expires') ?? res.headers.get('x-session-expires') ?? '';
+    if (!se) return;
+
+    const interval = parseInt(se.split(';')[0]);
+    const refresher = se.includes('refresher=uas') ? 'uas' : 'uac';
+    if (!interval || interval <= 0) return;
+
+    console.log(`[SipClient] Session-Expires: ${interval}s, refresher=${refresher}`);
+
+    if (refresher === 'uac') {
+      // We must send re-INVITE before interval expires; refresh at 50% of interval
+      const delay = Math.max((interval / 2) * 1000, 10_000);
+      this.scheduleRefresh(uri, rtpPort, delay, interval);
+    }
+    // If refresher=uas, the PBX will send us a re-INVITE which we handle in handleRequest
+  }
+
+  private scheduleRefresh(uri: string, rtpPort: number, delayMs: number, interval: number): void {
+    this.refreshTimer = setTimeout(async () => {
+      try {
+        console.log('[SipClient] a enviar re-INVITE (session refresh)');
+        const sdp = this.buildSdp(rtpPort);
+        const branch = this.newBranch();
+        this.send(this.buildMessage('INVITE', uri, branch, {
+          'Content-Type': 'application/sdp',
+          'Supported': 'timer',
+          'Session-Expires': `${interval};refresher=uac`,
+        }, sdp));
+        const res = await this.waitFor(branch, 10_000);
+        if (res.statusCode === 200) {
+          this.sendAck(uri);
+          this.scheduleRefresh(uri, rtpPort, (interval / 2) * 1000, interval);
+        }
+      } catch (err) {
+        console.warn('[SipClient] session refresh falhou:', (err as Error).message);
+      }
+    }, delayMs);
   }
 
   private async sendWithAuth(
@@ -269,8 +327,28 @@ export class SipClient extends EventEmitter {
     const firstLine = text.split('\r\n')[0];
     const headers = this.parseHeaders(text);
 
-    // Always reply 200 OK to BYE and NOTIFY; ignore everything else
-    if (firstLine.startsWith('BYE ') || firstLine.startsWith('NOTIFY ')) {
+    if (firstLine.startsWith('INVITE ')) {
+      // re-INVITE (session refresh from PBX or hold/unhold)
+      const sdp = this.sessionRtpPort ? this.buildSdp(this.sessionRtpPort) : '';
+      const response = [
+        'SIP/2.0 200 OK',
+        `Via: ${headers.get('via') ?? ''}`,
+        `From: ${headers.get('from') ?? ''}`,
+        `To: ${headers.get('to') ?? ''}`,
+        `Call-ID: ${headers.get('call-id') ?? ''}`,
+        `CSeq: ${headers.get('cseq') ?? ''}`,
+        `Contact: <sip:${config.sip.username}@${config.sip.localIp}:${this.localPort}>`,
+        sdp ? 'Content-Type: application/sdp' : '',
+        `Content-Length: ${Buffer.byteLength(sdp)}`,
+        '',
+        sdp,
+      ].filter((l) => l !== '').join('\r\n');
+      this.send(response);
+      console.log('[SipClient] re-INVITE respondido (session refresh)');
+      return;
+    }
+
+    if (firstLine.startsWith('OPTIONS ') || firstLine.startsWith('BYE ') || firstLine.startsWith('NOTIFY ')) {
       const response = [
         'SIP/2.0 200 OK',
         `Via: ${headers.get('via') ?? ''}`,
@@ -282,7 +360,6 @@ export class SipClient extends EventEmitter {
         '',
         '',
       ].join('\r\n');
-
       this.send(response);
 
       if (firstLine.startsWith('BYE ')) {
