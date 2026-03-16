@@ -1,20 +1,18 @@
-import Groq from 'groq-sdk';
+import OpenAI from 'openai';
 import config from '../config';
 import { parseWav, downsample } from '../audio/codec';
 
-const groq = new Groq({ apiKey: config.groq.apiKey });
+const openai = new OpenAI({ apiKey: config.openai.apiKey });
 
 /**
- * Convert text to 16-bit LE PCM at 8kHz using Groq PlayAI TTS.
+ * Convert text to 16-bit LE PCM at 8kHz using OpenAI TTS.
  * Returns a Buffer ready to pass to RtpHandler.sendPcm().
  */
 export async function synthesise(text: string): Promise<Buffer> {
-  const response = await (groq.audio.speech as unknown as {
-    create(params: Record<string, unknown>): Promise<{ arrayBuffer(): Promise<ArrayBuffer> }>;
-  }).create({
-    model: config.groq.ttsModel,
+  const response = await openai.audio.speech.create({
+    model: config.openai.ttsModel as 'tts-1' | 'tts-1-hd',
     input: text,
-    voice: config.groq.ttsVoice,
+    voice: config.openai.ttsVoice as 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer',
     response_format: 'wav',
   });
 
