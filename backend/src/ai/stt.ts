@@ -14,6 +14,7 @@ const client = new AssemblyAI({
 export class StreamingTranscriber extends EventEmitter {
   private transcriber: ReturnType<typeof client.streaming.transcriber> | null = null;
   private isConnected = false;
+  private isClosing = false;
 
   async connect(): Promise<void> {
     if (this.isConnected) return;
@@ -43,15 +44,17 @@ export class StreamingTranscriber extends EventEmitter {
     this.transcriber.on('close', (code: number, reason: string) => {
       console.debug(`[AssemblyAI STT] Session closed: ${code} ${reason}`);
       this.isConnected = false;
+      this.isClosing = false;
     });
 
     await this.transcriber.connect();
     this.isConnected = true;
+    this.isClosing = false;
     console.log('[AssemblyAI STT] Connected');
   }
 
   sendAudio(pcm8k: Buffer): void {
-    if (!this.isConnected || !this.transcriber) return;
+    if (!this.isConnected || this.isClosing || !this.transcriber) return;
 
     try {
       const pcm16k = upsample(pcm8k, 8000, 16000);
@@ -61,13 +64,22 @@ export class StreamingTranscriber extends EventEmitter {
       );
       this.transcriber.sendAudio(audio);
     } catch (err) {
+      const error = err as Error;
+      if (error.message.includes('Socket is not open for communication')) {
+        this.isConnected = false;
+        console.warn('[AssemblyAI STT] Audio dropped because the streaming socket is closed');
+        return;
+      }
+
       console.error('[AssemblyAI STT] Failed to send audio:', err);
-      this.emit('error', err as Error);
+      this.emit('error', error);
     }
   }
 
   async close(): Promise<void> {
     if (!this.transcriber) return;
+    this.isClosing = true;
+    this.isConnected = false;
 
     try {
       await this.transcriber.close(false);
