@@ -126,6 +126,14 @@ No frontend:
   - `[RESERVA_REJEITADA]`
 - O modelo de chat em `backend/src/ai/agent.ts` esta hardcoded.
 - O modelo de STT em `backend/src/ai/stt.ts` esta hardcoded.
+- Em SIP, o `ACK` para um `200 OK` ao `INVITE` tem de reutilizar o `CSeq` do `INVITE`.
+- Se o log mostrar `BYE` recebido do PBX, a chamada foi terminada pelo lado remoto e nao pelo utilizador.
+- O `BYE` enviado no `finally` do backend e limpeza local; nao e a causa da terminação remota.
+- Quando diagnosticar Yeastar P550 ou Asterisk, distinguir sempre:
+  - `200 OK` do `INVITE`
+  - `ACK` enviado pelo nosso agente
+  - `BYE` recebido do PBX
+  - `BYE` enviado pelo cleanup local
 
 ## Quando mexer em UI
 

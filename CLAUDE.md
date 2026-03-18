@@ -66,6 +66,9 @@ O sistema esta dividido em dois blocos:
   - RTP opera em 8 kHz;
   - audio TTS/STT tem de continuar compativel com essa cadeia;
   - frontend assume PCM 16-bit LE em 8 kHz.
+- Em SIP, o `ACK` de um `200 OK` ao `INVITE` tem de usar o mesmo `CSeq` do `INVITE`.
+- Em Yeastar P550 com Asterisk, um `BYE` recebido do PBX significa terminacao remota da chamada.
+- O `BYE` enviado no `finally` do backend e apenas limpeza local depois de a chamada terminar.
 
 ## Configuracao
 
@@ -133,6 +136,12 @@ No frontend:
   - websocket binary frames;
   - UI de monitorizacao;
   - prompts e decisao do agente.
+- Quando fizer debugging SIP, separar claramente:
+  - `200 OK` recebido do INVITE;
+  - `ACK` emitido pelo cliente;
+  - `BYE` recebido do PBX;
+  - `BYE` local de cleanup.
+- Se a chamada cair sem interaccao do utilizador, verificar primeiro se o ACK foi aceite pelo PBX e se a sesao SIP ficou correctamente estabelecida.
 
 ## Verificacao minima
 
