@@ -46,11 +46,14 @@ export default function CallForm({ onCallStarted, disabled }: Props) {
           type="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          placeholder="+351 912 345 678"
+          placeholder="00351912345678"
           required
           disabled={disabled || loading}
           className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition disabled:bg-gray-100"
         />
+        <p className="text-xs text-gray-500 mt-1 text-muted">
+          Cuidado! Não utilizar +, utilizar sempre 00. Não é obrigatório código de país/região para Portugal.
+        </p>
       </div>
 
       <div>
