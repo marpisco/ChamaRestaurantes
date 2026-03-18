@@ -238,7 +238,8 @@ export class SipClient extends EventEmitter {
 
   private sendAck(uri: string): void {
     const branch = this.newBranch();
-    this.send(this.buildMessage('ACK', uri, branch));
+    const ackCseq = Math.max(this.cseq - 1, 1);
+    this.send(this.buildMessage('ACK', uri, branch, {}, '', ackCseq));
   }
 
   // ─── Message building ─────────────────────────────────────────────────────
@@ -249,11 +250,13 @@ export class SipClient extends EventEmitter {
     branch: string,
     headers: Record<string, string> = {},
     body = '',
+    cseqNumber?: number,
   ): string {
     const { username, host, localIp } = config.sip;
     const port = this.localPort; // actual bound port (may differ from config)
     const toUri = method === 'REGISTER' ? `sip:${username}@${host}` : uri;
     const toTag = this.toTag ? `;tag=${this.toTag}` : '';
+    const cseq = cseqNumber ?? this.cseq++;
 
     const lines = [
       `${method} ${uri} SIP/2.0`,
@@ -261,7 +264,7 @@ export class SipClient extends EventEmitter {
       `From: <sip:${username}@${host}>;tag=${this.fromTag}`,
       `To: <${toUri}>${toTag}`,
       `Call-ID: ${this.callId}`,
-      `CSeq: ${this.cseq++} ${method}`,
+      `CSeq: ${cseq} ${method}`,
       `Contact: <sip:${username}@${localIp}:${port}>`,
       `Max-Forwards: 70`,
       `User-Agent: ChamaRestaurantes/1.0`,
