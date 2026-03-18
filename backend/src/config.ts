@@ -27,6 +27,9 @@ const config = {
     ttsModel: optional('GROQ_TTS_MODEL', 'canopylabs/orpheus-v1-english'),
     ttsVoice: optional('GROQ_TTS_VOICE', 'diana'),
   },
+  assemblyai: {
+    apiKey: optional('ASSEMBLYAI_API_KEY', ''),
+  },
   port: parseInt(optional('PORT', '3000')),
 };
 

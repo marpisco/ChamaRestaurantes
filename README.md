@@ -8,7 +8,7 @@ O utilizador preenche um numero a chamar e um prompt no frontend, o backend faz 
 
 - Backend: Node.js, TypeScript, Express, WebSocket, SIP e RTP/UDP
 - Frontend: React, TypeScript, Vite e Tailwind CSS
-- IA: Groq para transcricao, chat e sintese de voz
+- IA: AssemblyAI para transcricao em streaming, Groq para chat e sintese de voz
 
 ## Estrutura
 
@@ -45,6 +45,7 @@ Cria `backend/.env` com base em `backend/.env.example`.
 - `SIP_PASSWORD`
 - `SIP_LOCAL_IP`
 - `GROQ_API_KEY`
+- `ASSEMBLYAI_API_KEY`
 
 ### Variaveis opcionais
 

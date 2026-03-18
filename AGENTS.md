@@ -16,7 +16,7 @@ ChamaRestaurantes automatiza reservas telefonicas para restaurantes:
 
 - Backend: Node.js + TypeScript + Express + WebSocket + SIP/RTP sobre UDP.
 - Frontend: React + TypeScript + Vite + Tailwind CSS.
-- IA: Groq para STT, chat e TTS.
+- IA: AssemblyAI para STT streaming e Groq para chat e TTS.
 
 ## Mapa de ficheiros
 
@@ -85,6 +85,7 @@ Obrigatorias:
 - `SIP_PASSWORD`
 - `SIP_LOCAL_IP`
 - `GROQ_API_KEY`
+- `ASSEMBLYAI_API_KEY`
 
 Opcionais:
 

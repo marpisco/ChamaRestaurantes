@@ -1,13 +1,11 @@
 import { EventEmitter } from 'events';
 import { RtpHandler } from '../sip/RtpHandler';
-import { transcribe } from '../ai/stt';
+import { StreamingTranscriber } from '../ai/stt';
 import { synthesise } from '../ai/tts';
 import { getNextReply, getOpeningLine, type AgentMessage } from '../ai/agent';
 import type { TranscriptLine } from '../types';
 
 const SAMPLE_RATE = 8000;
-const SILENCE_THRESHOLD_RMS = 400;
-const SPEECH_END_SILENCE_MS = 350;
 const POST_TTS_GUARD_MS = 120;
 
 export type PipelineEvent =
@@ -23,8 +21,7 @@ export class AudioPipeline extends EventEmitter {
   private prompt: string;
 
   private history: AgentMessage[] = [];
-  private incomingBuffer: Buffer[] = [];
-  private flushTimer: NodeJS.Timeout | null = null;
+  private transcriber: StreamingTranscriber | null = null;
 
   private speaking = false;
   private done = false;
@@ -37,8 +34,55 @@ export class AudioPipeline extends EventEmitter {
     this.rtp.on('pcm', (pcm: Buffer) => this.onIncomingPcm(pcm));
   }
 
-  /** Start the pipeline: generate and send the opening line. */
+  /** Start the pipeline: connect STT, generate and send the opening line. */
   async start(): Promise<void> {
+    this.transcriber = new StreamingTranscriber();
+
+    this.transcriber.on('transcript', async (text: string) => {
+      if (!text || this.done) return;
+
+      this.emit('transcript', {
+        speaker: 'restaurant',
+        text,
+        timestamp: new Date(),
+      } satisfies TranscriptLine);
+
+      this.history.push({ role: 'user', text });
+
+      let reply: Awaited<ReturnType<typeof getNextReply>>;
+      try {
+        reply = await getNextReply(this.history, this.prompt);
+      } catch (err) {
+        this.emit('error', err as Error);
+        return;
+      }
+
+      this.history.push({ role: 'assistant', text: reply.text });
+      this.emit('transcript', {
+        speaker: 'agent',
+        text: reply.text,
+        timestamp: new Date(),
+      } satisfies TranscriptLine);
+
+      if (reply.text) await this.speak(reply.text);
+
+      if (reply.outcome !== 'ongoing') {
+        this.done = true;
+        this.emit('outcome', reply.outcome);
+      }
+    });
+
+    this.transcriber.on('error', (err: Error) => {
+      this.emit('error', err);
+    });
+
+    try {
+      await this.transcriber.connect();
+    } catch (err) {
+      this.emit('error', err as Error);
+      return;
+    }
+
     const opening = await getOpeningLine(this.prompt);
     this.history.push({ role: 'assistant', text: opening });
     this.emit('transcript', {
@@ -51,9 +95,9 @@ export class AudioPipeline extends EventEmitter {
 
   stop(): void {
     this.done = true;
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
+    if (this.transcriber) {
+      void this.transcriber.close();
+      this.transcriber = null;
     }
   }
 
@@ -61,59 +105,9 @@ export class AudioPipeline extends EventEmitter {
     if (this.done || this.speaking) return;
 
     this.emit('audio', pcm);
-    this.incomingBuffer.push(pcm);
 
-    if (this.flushTimer) clearTimeout(this.flushTimer);
-    this.flushTimer = setTimeout(() => this.flushBuffer(), SPEECH_END_SILENCE_MS);
-  }
-
-  private async flushBuffer(): Promise<void> {
-    this.flushTimer = null;
-    if (this.done || this.incomingBuffer.length === 0) return;
-
-    const combined = Buffer.concat(this.incomingBuffer);
-    this.incomingBuffer = [];
-
-    if (rms(combined) < SILENCE_THRESHOLD_RMS) return;
-
-    let transcript: string;
-    try {
-      transcript = await transcribe(combined);
-    } catch (err) {
-      this.emit('error', err as Error);
-      return;
-    }
-
-    if (!transcript) return;
-
-    this.emit('transcript', {
-      speaker: 'restaurant',
-      text: transcript,
-      timestamp: new Date(),
-    } satisfies TranscriptLine);
-
-    this.history.push({ role: 'user', text: transcript });
-
-    let reply: Awaited<ReturnType<typeof getNextReply>>;
-    try {
-      reply = await getNextReply(this.history, this.prompt);
-    } catch (err) {
-      this.emit('error', err as Error);
-      return;
-    }
-
-    this.history.push({ role: 'assistant', text: reply.text });
-    this.emit('transcript', {
-      speaker: 'agent',
-      text: reply.text,
-      timestamp: new Date(),
-    } satisfies TranscriptLine);
-
-    if (reply.text) await this.speak(reply.text);
-
-    if (reply.outcome !== 'ongoing') {
-      this.done = true;
-      this.emit('outcome', reply.outcome);
+    if (this.transcriber) {
+      this.transcriber.sendAudio(pcm);
     }
   }
 
@@ -134,15 +128,6 @@ export class AudioPipeline extends EventEmitter {
     await sleep(durationMs + POST_TTS_GUARD_MS);
     this.speaking = false;
   }
-}
-
-function rms(pcm: Buffer): number {
-  let sum = 0;
-  for (let i = 0; i + 1 < pcm.length; i += 2) {
-    const s = pcm.readInt16LE(i);
-    sum += s * s;
-  }
-  return Math.sqrt(sum / (pcm.length >> 1));
 }
 
 function sleep(ms: number): Promise<void> {
