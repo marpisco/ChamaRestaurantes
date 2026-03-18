@@ -6,13 +6,13 @@ import { SipClient } from '../sip/SipClient';
 import { RtpHandler } from '../sip/RtpHandler';
 import { AudioPipeline } from '../audio/AudioPipeline';
 import type { CallRecord, CallRequest, WsMessage } from '../types';
+import { parseCallRequest } from './callRequest';
 
 export const calls = new Map<string, CallRecord>();
 
 /** Broadcast a WsMessage to all connected clients. Audio chunks are sent as binary frames. */
 export function broadcast(wss: WebSocketServer, msg: WsMessage): void {
   if (msg.type === 'audio.chunk' && Buffer.isBuffer(msg.payload)) {
-    // Send raw PCM as binary WebSocket frame for efficiency
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) client.send(msg.payload as Buffer);
     });
@@ -27,20 +27,19 @@ export function broadcast(wss: WebSocketServer, msg: WsMessage): void {
 export function buildCallsRouter(wss: WebSocketServer): Router {
   const router = Router();
 
-  // POST /api/calls — start a call
   router.post('/', async (req: Request, res: Response) => {
-    const { phone, people, preOrder } = req.body as CallRequest;
-
-    if (!phone || !people) {
-      return res.status(400).json({ error: 'phone and people are required' });
+    let callRequest: CallRequest;
+    try {
+      callRequest = parseCallRequest(req.body);
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
     }
 
     const id = uuidv4();
     const record: CallRecord = {
       id,
-      phone,
-      people,
-      preOrder,
+      phone: callRequest.phone,
+      prompt: callRequest.prompt,
       status: 'pending',
       startedAt: new Date(),
       transcript: [],
@@ -49,7 +48,6 @@ export function buildCallsRouter(wss: WebSocketServer): Router {
 
     res.status(202).json({ id });
 
-    // Run the call asynchronously
     runCall(id, record, wss).catch((err) => {
       const message = (err as Error).message ?? String(err);
       console.error(`[call ${id}] FALHA:`, message);
@@ -61,30 +59,25 @@ export function buildCallsRouter(wss: WebSocketServer): Router {
     });
   });
 
-  // GET /api/calls — list all
   router.get('/', (_req, res) => {
     res.json([...calls.values()]);
   });
 
-  // GET /api/calls/:id
   router.get('/:id', (req, res) => {
     const call = calls.get(req.params.id);
     if (!call) return res.status(404).json({ error: 'Not found' });
     res.json(call);
   });
 
-  // DELETE /api/calls/:id — hang up
   router.delete('/:id', (req, res) => {
     const call = calls.get(req.params.id);
     if (!call) return res.status(404).json({ error: 'Not found' });
-    call.hangup?.(); // triggers BYE + cleanup via the runCall finally block
+    call.hangup?.();
     res.json({ ok: true });
   });
 
   return router;
 }
-
-// ─── Call orchestration ──────────────────────────────────────────────────────
 
 async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Promise<void> {
   const emit = (msg: WsMessage) => broadcast(wss, msg);
@@ -93,13 +86,11 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     emit({ type: 'call.status', callId: id, payload: { status } });
   };
 
-  // SIP port 0 → OS assigns a free ephemeral port (avoids EADDRINUSE)
   const sip = new SipClient(0);
   const rtpPort = await RtpHandler.allocatePort();
   const rtp = new RtpHandler(rtpPort);
   let pipeline: AudioPipeline | null = null;
 
-  // Promise that resolves when the call should end (any reason)
   let resolveCall!: () => void;
   const callEnded = new Promise<void>((r) => { resolveCall = r; });
 
@@ -113,23 +104,19 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     resolveCall();
   };
 
-  // Expose hangup so DELETE /api/calls/:id can trigger it
   record.hangup = () => endCall();
 
   try {
-    // 1. Bind SIP + RTP sockets
     console.log(`[call ${id}] a ligar sockets (RTP :${rtpPort})`);
     setStatus('registering');
     await sip.start();
     await rtp.start();
 
-    // 2. Register SIP extension
-    console.log(`[call ${id}] a registar extensão ${config.sip.username}@${config.sip.host}`);
+    console.log(`[call ${id}] a registar extensao ${config.sip.username}@${config.sip.host}`);
     await sip.register();
     console.log(`[call ${id}] REGISTER OK`);
 
-    // 3. Initiate call
-    console.log(`[call ${id}] INVITE → ${record.phone}`);
+    console.log(`[call ${id}] INVITE -> ${record.phone}`);
     setStatus('calling');
     sip.on('ringing', () => { console.log(`[call ${id}] a tocar`); setStatus('ringing'); });
 
@@ -138,14 +125,12 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     rtp.setRemote(sdp.ip, sdp.port);
     setStatus('connected');
 
-    // 4. Remote hang-up
     sip.once('remote_bye', () => {
       console.log(`[call ${id}] restaurante desligou`);
       endCall({ success: false, summary: 'O restaurante desligou a chamada.' });
     });
 
-    // 5. Audio pipeline
-    pipeline = new AudioPipeline(rtp, record.people, record.preOrder);
+    pipeline = new AudioPipeline(rtp, record.prompt);
 
     pipeline.on('transcript', (line) => {
       record.transcript.push(line);
@@ -160,8 +145,8 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
       endCall({
         success: outcome === 'confirmed',
         summary: outcome === 'confirmed'
-          ? `Reserva confirmada para ${record.people} pessoas.`
-          : 'Restaurante não pôde aceitar a reserva.',
+          ? 'Reserva confirmada.'
+          : 'O restaurante nao conseguiu aceitar a reserva.',
       });
     });
 
@@ -170,12 +155,8 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     });
 
     await pipeline.start();
-
-    // Wait here until the call ends (hangup, remote BYE, or outcome)
     await callEnded;
-
   } finally {
-    // Always clean up SIP + RTP sockets when the call ends for any reason
     record.hangup = undefined;
     await sip.bye().catch(() => {});
     sip.destroy();

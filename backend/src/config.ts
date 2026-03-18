@@ -3,7 +3,7 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-function require(name: string): string {
+function requiredEnv(name: string): string {
   const val = process.env[name];
   if (!val) throw new Error(`Missing environment variable: ${name}`);
   return val;
@@ -15,15 +15,15 @@ function optional(name: string, fallback: string): string {
 
 const config = {
   sip: {
-    host: require('SIP_HOST'),
+    host: requiredEnv('SIP_HOST'),
     port: parseInt(optional('SIP_PORT', '5060')),
-    username: require('SIP_USERNAME'),
-    password: require('SIP_PASSWORD'),
-    localIp: require('SIP_LOCAL_IP'),
+    username: requiredEnv('SIP_USERNAME'),
+    password: requiredEnv('SIP_PASSWORD'),
+    localIp: requiredEnv('SIP_LOCAL_IP'),
     localPort: parseInt(optional('SIP_LOCAL_PORT', '5080')),
   },
   groq: {
-    apiKey: require('GROQ_API_KEY'),
+    apiKey: requiredEnv('GROQ_API_KEY'),
     ttsModel: optional('GROQ_TTS_MODEL', 'canopylabs/orpheus-v1-english'),
     ttsVoice: optional('GROQ_TTS_VOICE', 'diana'),
   },
