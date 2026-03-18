@@ -25,8 +25,11 @@ export class StreamingTranscriber extends EventEmitter {
     this.transcriber = client.streaming.transcriber({
       apiKey: config.assemblyai.apiKey,
       sampleRate: 16000,
+      encoding: 'pcm_s16le',
       speechModel: 'universal-streaming-multilingual',
+      languageDetection: true,
       endOfTurnConfidenceThreshold: 0.4,
+      inactivityTimeout: 120,
     });
 
     this.transcriber.on('error', (error: Error) => {
