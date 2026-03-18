@@ -81,15 +81,76 @@ export class StreamingTranscriber extends EventEmitter {
   private transcriber: ReturnType<typeof client.streaming.transcriber> | null = null;
   private isConnected = false;
   private isClosing = false;
+  private connectPromise: Promise<void> | null = null;
   private chunkBuffer = new AudioChunkBuffer(TARGET_CHUNK_BYTES_8K, MIN_CHUNK_BYTES_8K);
   private flushTimer: NodeJS.Timeout | null = null;
 
   async connect(): Promise<void> {
     if (this.isConnected) return;
+    if (this.connectPromise) return this.connectPromise;
     if (!config.assemblyai.apiKey) {
       throw new Error('Missing environment variable: ASSEMBLYAI_API_KEY');
     }
 
+    this.connectPromise = this.connectInternal();
+    try {
+      await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
+  sendAudio(pcm8k: Buffer): void {
+    if (this.isClosing) return;
+
+    try {
+      this.chunkBuffer.push(pcm8k);
+      this.resetFlushTimer();
+
+      if (!this.isConnected) {
+        void this.connect().then(() => this.drainBufferedAudio()).catch((err) => {
+          this.emit('error', err as Error);
+        });
+        return;
+      }
+
+      this.drainBufferedAudio();
+    } catch (err) {
+      const error = err as Error;
+      if (error.message.includes('Socket is not open for communication')) {
+        this.isConnected = false;
+        console.warn('[AssemblyAI STT] Audio dropped because the streaming socket is closed');
+        return;
+      }
+
+      console.error('[AssemblyAI STT] Failed to send audio:', err);
+      this.emit('error', error);
+    }
+  }
+
+  async close(): Promise<void> {
+    if (!this.transcriber) return;
+    this.isClosing = true;
+    this.isConnected = false;
+    this.connectPromise = null;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.chunkBuffer.reset();
+
+    try {
+      await this.transcriber.close(false);
+      console.log('[AssemblyAI STT] Closed');
+    } catch (err) {
+      console.error('[AssemblyAI STT] Failed to close:', err);
+    } finally {
+      this.isConnected = false;
+      this.transcriber = null;
+    }
+  }
+
+  private async connectInternal(): Promise<void> {
     this.transcriber = client.streaming.transcriber({
       apiKey: config.assemblyai.apiKey,
       sampleRate: 16000,
@@ -124,57 +185,12 @@ export class StreamingTranscriber extends EventEmitter {
     console.log('[AssemblyAI STT] Connected');
   }
 
-  sendAudio(pcm8k: Buffer): void {
-    if (!this.isConnected || this.isClosing || !this.transcriber) return;
+  private drainBufferedAudio(): void {
+    if (!this.isConnected) return;
 
-    try {
-      this.chunkBuffer.push(pcm8k);
-      const readyChunks = this.chunkBuffer.drainReadyChunks();
-
-      if (this.flushTimer) {
-        clearTimeout(this.flushTimer);
-        this.flushTimer = null;
-      }
-
-      for (const chunk of readyChunks) {
-        this.sendChunk(chunk);
-      }
-
-      this.flushTimer = setTimeout(() => {
-        this.flushTimer = null;
-        this.flushPendingAudio();
-      }, FLUSH_DELAY_MS);
-    } catch (err) {
-      const error = err as Error;
-      if (error.message.includes('Socket is not open for communication')) {
-        this.isConnected = false;
-        console.warn('[AssemblyAI STT] Audio dropped because the streaming socket is closed');
-        return;
-      }
-
-      console.error('[AssemblyAI STT] Failed to send audio:', err);
-      this.emit('error', error);
-    }
-  }
-
-  async close(): Promise<void> {
-    if (!this.transcriber) return;
-    this.isClosing = true;
-    this.isConnected = false;
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
-    this.chunkBuffer.reset();
-
-    try {
-      await this.transcriber.close(false);
-      console.log('[AssemblyAI STT] Closed');
-    } catch (err) {
-      console.error('[AssemblyAI STT] Failed to close:', err);
-    } finally {
-      this.isConnected = false;
-      this.transcriber = null;
+    const readyChunks = this.chunkBuffer.drainReadyChunks();
+    for (const chunk of readyChunks) {
+      this.sendChunk(chunk);
     }
   }
 
@@ -183,6 +199,16 @@ export class StreamingTranscriber extends EventEmitter {
     const chunk = this.chunkBuffer.flushPendingChunk();
     if (!chunk) return;
     this.sendChunk(chunk);
+  }
+
+  private resetFlushTimer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+    }
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushPendingAudio();
+    }, FLUSH_DELAY_MS);
   }
 
   private sendChunk(pcm8k: Buffer): void {

@@ -34,7 +34,7 @@ export class AudioPipeline extends EventEmitter {
     this.rtp.on('pcm', (pcm: Buffer) => this.onIncomingPcm(pcm));
   }
 
-  /** Start the pipeline: generate the opening line, then connect STT. */
+  /** Start the pipeline: generate the opening line. STT connects on first inbound audio. */
   async start(): Promise<void> {
     this.transcriber = new StreamingTranscriber();
 
@@ -84,12 +84,6 @@ export class AudioPipeline extends EventEmitter {
       timestamp: new Date(),
     } satisfies TranscriptLine);
     await this.speak(opening);
-
-    try {
-      await this.transcriber.connect();
-    } catch (err) {
-      this.emit('error', err as Error);
-    }
   }
 
   stop(): void {
