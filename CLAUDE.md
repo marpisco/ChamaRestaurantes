@@ -6,7 +6,7 @@ Este ficheiro descreve como este projecto esta estruturado e como deve ser trata
 
 ChamaRestaurantes e uma aplicacao web que:
 
-- recebe um pedido de reserva no frontend;
+- recebe um numero a chamar e um prompt no frontend;
 - cria uma chamada telefonica de saida via SIP;
 - troca audio em tempo real por RTP/UDP;
 - converte fala em texto com Groq Whisper;
@@ -38,7 +38,7 @@ O sistema esta dividido em dois blocos:
 
 ## Como isto funciona
 
-1. O utilizador submete `phone`, `people` e opcionalmente `preOrder`.
+1. O utilizador submete `phone` e `prompt`.
 2. O frontend faz `POST /api/calls`.
 3. O backend cria um `CallRecord` em memoria e arranca `runCall(...)`.
 4. O `SipClient` faz `REGISTER` e depois `INVITE`.
@@ -142,4 +142,3 @@ Quando alterar funcionalidade:
 2. Testar arranque local.
 3. Confirmar que a UI continua a ligar a `/api/calls` e `/ws`.
 4. Confirmar que eventos WS continuam compativeis.
-

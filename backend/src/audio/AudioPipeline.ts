@@ -2,13 +2,13 @@ import { EventEmitter } from 'events';
 import { RtpHandler } from '../sip/RtpHandler';
 import { transcribe } from '../ai/stt';
 import { synthesise } from '../ai/tts';
-import { getNextReply, getOpeningLine, AgentMessage } from '../ai/agent';
+import { getNextReply, getOpeningLine, type AgentMessage } from '../ai/agent';
 import type { TranscriptLine } from '../types';
 
 const SAMPLE_RATE = 8000;
-const SILENCE_THRESHOLD_RMS = 400;   // Below this = silence
-const SPEECH_CHUNK_DURATION_MS = 1500; // Accumulate 1.5s before transcribing
-const PCM_BYTES_PER_MS = (SAMPLE_RATE * 2) / 1000;  // 16 bytes/ms
+const SILENCE_THRESHOLD_RMS = 400;
+const SPEECH_END_SILENCE_MS = 350;
+const POST_TTS_GUARD_MS = 120;
 
 export type PipelineEvent =
   | { type: 'transcript'; line: TranscriptLine }
@@ -16,39 +16,30 @@ export type PipelineEvent =
   | { type: 'error'; error: Error };
 
 /**
- * Orchestrates the audio loop for a single call:
- *   receive PCM → VAD → STT → LLM → TTS → send PCM
- *
- * Events:
- *   'transcript'  (line: TranscriptLine)
- *   'outcome'     (outcome: 'confirmed' | 'rejected')
- *   'audio'       (pcm: Buffer) – raw PCM for live monitoring
- *   'error'       (err: Error)
+ * Orchestrates the audio loop for a single call.
  */
 export class AudioPipeline extends EventEmitter {
   private rtp: RtpHandler;
-  private people: number;
-  private preOrder?: string;
+  private prompt: string;
 
   private history: AgentMessage[] = [];
   private incomingBuffer: Buffer[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
 
-  private speaking = false;  // True while agent TTS is being sent
+  private speaking = false;
   private done = false;
 
-  constructor(rtp: RtpHandler, people: number, preOrder?: string) {
+  constructor(rtp: RtpHandler, prompt: string) {
     super();
     this.rtp = rtp;
-    this.people = people;
-    this.preOrder = preOrder;
+    this.prompt = prompt;
 
     this.rtp.on('pcm', (pcm: Buffer) => this.onIncomingPcm(pcm));
   }
 
   /** Start the pipeline: generate and send the opening line. */
   async start(): Promise<void> {
-    const opening = await getOpeningLine(this.people, this.preOrder);
+    const opening = await getOpeningLine(this.prompt);
     this.history.push({ role: 'assistant', text: opening });
     this.emit('transcript', {
       speaker: 'agent',
@@ -60,23 +51,20 @@ export class AudioPipeline extends EventEmitter {
 
   stop(): void {
     this.done = true;
-    if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
   }
-
-  // ─── Incoming audio ───────────────────────────────────────────────────────
 
   private onIncomingPcm(pcm: Buffer): void {
     if (this.done || this.speaking) return;
 
-    // Broadcast to live monitors
     this.emit('audio', pcm);
-
     this.incomingBuffer.push(pcm);
 
-    // Schedule flush after SPEECH_CHUNK_DURATION_MS of continuous reception
-    if (!this.flushTimer) {
-      this.flushTimer = setTimeout(() => this.flushBuffer(), SPEECH_CHUNK_DURATION_MS);
-    }
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => this.flushBuffer(), SPEECH_END_SILENCE_MS);
   }
 
   private async flushBuffer(): Promise<void> {
@@ -86,7 +74,6 @@ export class AudioPipeline extends EventEmitter {
     const combined = Buffer.concat(this.incomingBuffer);
     this.incomingBuffer = [];
 
-    // Skip silent chunks
     if (rms(combined) < SILENCE_THRESHOLD_RMS) return;
 
     let transcript: string;
@@ -107,10 +94,9 @@ export class AudioPipeline extends EventEmitter {
 
     this.history.push({ role: 'user', text: transcript });
 
-    // Generate LLM reply
     let reply: Awaited<ReturnType<typeof getNextReply>>;
     try {
-      reply = await getNextReply(this.history, this.people, this.preOrder);
+      reply = await getNextReply(this.history, this.prompt);
     } catch (err) {
       this.emit('error', err as Error);
       return;
@@ -131,8 +117,6 @@ export class AudioPipeline extends EventEmitter {
     }
   }
 
-  // ─── Outgoing audio ───────────────────────────────────────────────────────
-
   private async speak(text: string): Promise<void> {
     this.speaking = true;
     let pcm: Buffer;
@@ -146,14 +130,11 @@ export class AudioPipeline extends EventEmitter {
 
     this.rtp.sendPcm(pcm);
 
-    // Wait for the audio to finish playing before listening again
     const durationMs = (pcm.length / 2 / SAMPLE_RATE) * 1000;
-    await sleep(durationMs + 500); // +500ms buffer
+    await sleep(durationMs + POST_TTS_GUARD_MS);
     this.speaking = false;
   }
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function rms(pcm: Buffer): number {
   let sum = 0;

@@ -16,10 +16,18 @@ export function useCallStream(onEvent: EventHandler, playAudio: boolean) {
   const wsRef = useRef<WebSocket | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const nextPlayTimeRef = useRef(0);
+  const playAudioRef = useRef(playAudio);
+
+  useEffect(() => {
+    playAudioRef.current = playAudio;
+    if (!playAudio) {
+      nextPlayTimeRef.current = 0;
+    }
+  }, [playAudio]);
 
   const playPcmChunk = useCallback((raw: ArrayBuffer) => {
-    if (!playAudio) return;
-    const ctx = audioCtxRef.current ?? (audioCtxRef.current = new AudioContext({ sampleRate: 8000 }));
+    if (!playAudioRef.current) return;
+    const ctx = audioCtxRef.current ?? (audioCtxRef.current = new AudioContext({ latencyHint: 'interactive' }));
 
     // raw is 16-bit LE PCM at 8kHz
     const int16 = new Int16Array(raw);
@@ -36,10 +44,11 @@ export function useCallStream(onEvent: EventHandler, playAudio: boolean) {
     source.connect(ctx.destination);
 
     const now = ctx.currentTime;
-    const startAt = Math.max(now, nextPlayTimeRef.current);
+    const leadTime = 0.02;
+    const startAt = Math.max(now + leadTime, nextPlayTimeRef.current);
     source.start(startAt);
     nextPlayTimeRef.current = startAt + buffer.duration;
-  }, [playAudio]);
+  }, []);
 
   useEffect(() => {
     // In dev, connect directly to the backend to avoid Vite's WS proxy issues with binary frames.

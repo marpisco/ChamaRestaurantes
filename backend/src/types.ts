@@ -9,15 +9,13 @@ export type CallStatus =
 
 export interface CallRequest {
   phone: string;
-  people: number;
-  preOrder?: string;
+  prompt: string;
 }
 
 export interface CallRecord {
   id: string;
   phone: string;
-  people: number;
-  preOrder?: string;
+  prompt: string;
   status: CallStatus;
   startedAt: Date;
   endedAt?: Date;

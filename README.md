@@ -2,7 +2,7 @@
 
 Aplicacao web para automatizar reservas telefonicas em restaurantes.
 
-O utilizador preenche um formulario no frontend, o backend faz a chamada por SIP e o sistema trata a conversa em tempo real com RTP, transcricao e TTS.
+O utilizador preenche um numero a chamar e um prompt no frontend, o backend faz a chamada por SIP e o sistema trata a conversa em tempo real com RTP, transcricao e TTS.
 
 ## Stack
 
@@ -19,7 +19,7 @@ O utilizador preenche um formulario no frontend, o backend faz a chamada por SIP
 
 ## Fluxo
 
-1. O frontend envia `POST /api/calls`.
+1. O frontend envia `POST /api/calls` com `phone` e `prompt`.
 2. O backend cria um `CallRecord` em memoria.
 3. O `SipClient` faz `REGISTER` e `INVITE`.
 4. O `RtpHandler` recebe audio e converte para PCM.
@@ -113,8 +113,7 @@ Body exemplo:
 ```json
 {
   "phone": "+351912345678",
-  "people": 2,
-  "preOrder": "2 bacalhaus a bras"
+  "prompt": "Liga ao restaurante x, para reservar uma mesa com x pessoas, e deixa a reserva em nome de x."
 }
 ```
 
@@ -155,6 +154,7 @@ Audio em tempo real:
 - O estado das chamadas e guardado em memoria
 - O sistema foi desenhado para um fluxo simples de uma chamada activa na interface
 - O modelo de chat e o modelo de STT estao fixos no codigo
+- A interface principal usa apenas o numero a chamar e um prompt editavel
 - O fim da chamada depende dos marcadores:
   - `[RESERVA_CONFIRMADA]`
   - `[RESERVA_REJEITADA]`
@@ -178,4 +178,3 @@ Audio em tempo real:
 
 - [CLAUDE.md](CLAUDE.md)
 - [AGENTS.md](AGENTS.md)
-

@@ -6,7 +6,7 @@ Estas instrucoes aplicam-se ao trabalho dentro deste projecto e complementam as 
 
 ChamaRestaurantes automatiza reservas telefonicas para restaurantes:
 
-- o utilizador introduz telefone, numero de pessoas e encomenda previa opcional;
+- o utilizador introduz o numero a chamar e um prompt;
 - o backend faz a chamada por SIP;
 - o audio e processado em RTP;
 - a fala e transcrita, respondida por IA e sintetizada de volta para audio;
@@ -36,7 +36,7 @@ ChamaRestaurantes automatiza reservas telefonicas para restaurantes:
 
 ## Fluxo de execucao
 
-1. `POST /api/calls` cria um `CallRecord` em memoria.
+1. `POST /api/calls` cria um `CallRecord` em memoria a partir de `phone` e `prompt`.
 2. `runCall(...)` tenta `REGISTER`.
 3. `runCall(...)` faz `INVITE`.
 4. A chamada usa RTP para audio bidireccional.
@@ -148,4 +148,3 @@ Antes de considerar uma alteracao como concluida:
 2. O fluxo de chamada continua coerente.
 3. Os eventos WS continuam compativeis.
 4. A documentacao reflecte a mudanca relevante.
-

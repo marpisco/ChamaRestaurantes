@@ -1,38 +1,14 @@
 import Groq from 'groq-sdk';
 import config from '../config';
+import { buildAgentMessages, SYSTEM_PROMPT, type AgentMessage } from './prompt';
 
 const groq = new Groq({ apiKey: config.groq.apiKey });
 
 export type AgentOutcome = 'confirmed' | 'rejected' | 'ongoing';
 
-export interface AgentMessage {
-  role: 'user' | 'assistant';
-  text: string;
-}
-
 export interface AgentReply {
   text: string;
   outcome: AgentOutcome;
-}
-
-function buildSystemPrompt(people: number, preOrder?: string): string {
-  const preOrderLine = preOrder
-    ? `\nO cliente quer fazer a seguinte encomenda prévia: "${preOrder}".`
-    : '';
-
-  return `És um assistente que telefona a restaurantes em nome de um cliente português para fazer uma reserva.
-
-Detalhes da reserva:
-- Número de pessoas: ${people}${preOrderLine}
-
-Instruções:
-- Fala sempre em português europeu (PT-PT), de forma educada, natural e concisa.
-- Apresenta-te como assistente do cliente e pede uma reserva para hoje à noite, ou pergunta quando têm disponibilidade.
-- Se o restaurante fizer perguntas (nome, hora, etc.), responde de forma razoável (usa "Cliente" como nome, escolhe uma hora razoável).
-- Se tiveres encomenda prévia, menciona-a quando a reserva estiver encaminhada.
-- Quando a reserva estiver confirmada, termina a conversa com exatamente: [RESERVA_CONFIRMADA]
-- Se o restaurante não puder aceitar (lotado, encerrado, etc.), agradece e termina com: [RESERVA_REJEITADA]
-- Não uses calões, gírias ou expressões brasileiras.`;
 }
 
 /**
@@ -40,13 +16,9 @@ Instruções:
  */
 export async function getNextReply(
   history: AgentMessage[],
-  people: number,
-  preOrder?: string,
+  prompt: string,
 ): Promise<AgentReply> {
-  const messages: Groq.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildSystemPrompt(people, preOrder) },
-    ...history.map((m) => ({ role: m.role, content: m.text })),
-  ];
+  const messages = buildAgentMessages(prompt, history);
 
   const completion = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
@@ -74,7 +46,10 @@ export async function getNextReply(
 /**
  * Generate the opening line the agent will say when the call is answered.
  */
-export async function getOpeningLine(people: number, preOrder?: string): Promise<string> {
-  const reply = await getNextReply([], people, preOrder);
+export async function getOpeningLine(prompt: string): Promise<string> {
+  const reply = await getNextReply([], prompt);
   return reply.text;
 }
+
+export { SYSTEM_PROMPT };
+export type { AgentMessage } from './prompt';
