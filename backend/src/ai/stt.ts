@@ -7,6 +7,72 @@ const client = new AssemblyAI({
   apiKey: config.assemblyai.apiKey,
 });
 
+const TARGET_CHUNK_BYTES_8K = 1600; // 100 ms at 8kHz, 16-bit mono
+const MIN_CHUNK_BYTES_8K = 800; // 50 ms at 8kHz, 16-bit mono
+const FLUSH_DELAY_MS = 60;
+
+export class AudioChunkBuffer {
+  private chunks: Buffer[] = [];
+  private bufferedBytes = 0;
+
+  constructor(
+    private readonly targetBytes: number,
+    private readonly minimumFlushBytes: number,
+  ) {}
+
+  push(chunk: Buffer): void {
+    this.chunks.push(chunk);
+    this.bufferedBytes += chunk.length;
+  }
+
+  drainReadyChunks(): Buffer[] {
+    const ready: Buffer[] = [];
+
+    while (this.bufferedBytes >= this.targetBytes) {
+      ready.push(this.takeBytes(this.targetBytes));
+    }
+
+    return ready;
+  }
+
+  flushPendingChunk(): Buffer | null {
+    if (this.bufferedBytes < this.minimumFlushBytes) return null;
+    return this.takeBytes(this.bufferedBytes);
+  }
+
+  pendingBytes(): number {
+    return this.bufferedBytes;
+  }
+
+  reset(): void {
+    this.chunks = [];
+    this.bufferedBytes = 0;
+  }
+
+  private takeBytes(size: number): Buffer {
+    const out = Buffer.allocUnsafe(size);
+    let written = 0;
+
+    while (written < size && this.chunks.length > 0) {
+      const current = this.chunks[0];
+      const remaining = size - written;
+
+      if (current.length <= remaining) {
+        current.copy(out, written);
+        written += current.length;
+        this.chunks.shift();
+      } else {
+        current.copy(out, written, 0, remaining);
+        this.chunks[0] = current.subarray(remaining);
+        written += remaining;
+      }
+    }
+
+    this.bufferedBytes -= size;
+    return out;
+  }
+}
+
 /**
  * Streaming speech-to-text using AssemblyAI.
  * Handles upsampling from 8kHz RTP PCM to 16kHz for AssemblyAI streaming.
@@ -15,6 +81,8 @@ export class StreamingTranscriber extends EventEmitter {
   private transcriber: ReturnType<typeof client.streaming.transcriber> | null = null;
   private isConnected = false;
   private isClosing = false;
+  private chunkBuffer = new AudioChunkBuffer(TARGET_CHUNK_BYTES_8K, MIN_CHUNK_BYTES_8K);
+  private flushTimer: NodeJS.Timeout | null = null;
 
   async connect(): Promise<void> {
     if (this.isConnected) return;
@@ -60,12 +128,22 @@ export class StreamingTranscriber extends EventEmitter {
     if (!this.isConnected || this.isClosing || !this.transcriber) return;
 
     try {
-      const pcm16k = upsample(pcm8k, 8000, 16000);
-      const audio = pcm16k.buffer.slice(
-        pcm16k.byteOffset,
-        pcm16k.byteOffset + pcm16k.byteLength,
-      );
-      this.transcriber.sendAudio(audio);
+      this.chunkBuffer.push(pcm8k);
+      const readyChunks = this.chunkBuffer.drainReadyChunks();
+
+      if (this.flushTimer) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
+
+      for (const chunk of readyChunks) {
+        this.sendChunk(chunk);
+      }
+
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        this.flushPendingAudio();
+      }, FLUSH_DELAY_MS);
     } catch (err) {
       const error = err as Error;
       if (error.message.includes('Socket is not open for communication')) {
@@ -83,6 +161,11 @@ export class StreamingTranscriber extends EventEmitter {
     if (!this.transcriber) return;
     this.isClosing = true;
     this.isConnected = false;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.chunkBuffer.reset();
 
     try {
       await this.transcriber.close(false);
@@ -93,5 +176,23 @@ export class StreamingTranscriber extends EventEmitter {
       this.isConnected = false;
       this.transcriber = null;
     }
+  }
+
+  private flushPendingAudio(): void {
+    if (!this.isConnected || this.isClosing) return;
+    const chunk = this.chunkBuffer.flushPendingChunk();
+    if (!chunk) return;
+    this.sendChunk(chunk);
+  }
+
+  private sendChunk(pcm8k: Buffer): void {
+    if (!this.transcriber) return;
+
+    const pcm16k = upsample(pcm8k, 8000, 16000);
+    const audio = pcm16k.buffer.slice(
+      pcm16k.byteOffset,
+      pcm16k.byteOffset + pcm16k.byteLength,
+    );
+    this.transcriber.sendAudio(audio);
   }
 }
