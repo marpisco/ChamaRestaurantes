@@ -9,7 +9,7 @@ ChamaRestaurantes e uma aplicacao web que:
 - recebe um numero a chamar e um prompt no frontend;
 - cria uma chamada telefonica de saida via SIP;
 - troca audio em tempo real por RTP/UDP;
-- converte fala em texto com Groq Whisper;
+- converte fala em texto com AssemblyAI Streaming;
 - gera respostas com Groq Chat;
 - sintetiza audio com Groq TTS;
 - mostra estado, transcricao e resultado ao utilizador via WebSocket.
@@ -28,7 +28,7 @@ O sistema esta dividido em dois blocos:
 - `backend/src/sip/RtpHandler.ts`: recepcao/envio RTP e codec G.711 PCMU.
 - `backend/src/audio/AudioPipeline.ts`: loop de voz, STT, LLM e TTS.
 - `backend/src/ai/agent.ts`: prompt e decisao de confirmacao/rejeicao.
-- `backend/src/ai/stt.ts`: transcricao com Groq Whisper.
+- `backend/src/ai/stt.ts`: transcricao streaming com AssemblyAI.
 - `backend/src/ai/tts.ts`: sintese de voz com Groq Speech.
 - `backend/src/audio/codec.ts`: utilitarios de codec, WAV e downsampling.
 - `frontend/src/App.tsx`: estado da app e composicao da interface.
@@ -81,6 +81,7 @@ Obrigatorias:
 - `SIP_PASSWORD`
 - `SIP_LOCAL_IP`
 - `GROQ_API_KEY`
+- `ASSEMBLYAI_API_KEY`
 
 Opcionais:
 

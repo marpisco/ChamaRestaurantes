@@ -152,3 +152,30 @@ export function downsample(pcm: Buffer, srcRate: number, dstRate: number): Buffe
   }
   return out;
 }
+
+/**
+ * Upsample 16-bit LE PCM from srcRate to dstRate using linear interpolation.
+ */
+export function upsample(pcm: Buffer, srcRate: number, dstRate: number): Buffer {
+  if (srcRate === dstRate) return pcm;
+
+  const ratio = dstRate / srcRate;
+  const srcSamples = pcm.length >> 1;
+  const dstSamples = Math.floor(srcSamples * ratio);
+  const out = Buffer.allocUnsafe(dstSamples * 2);
+
+  for (let i = 0; i < dstSamples; i++) {
+    const srcIdx = i / ratio;
+    const srcIdxFloor = Math.floor(srcIdx);
+    const srcIdxCeil = Math.min(srcIdxFloor + 1, srcSamples - 1);
+    const frac = srcIdx - srcIdxFloor;
+
+    const s1 = pcm.readInt16LE(srcIdxFloor * 2);
+    const s2 = pcm.readInt16LE(srcIdxCeil * 2);
+    const interpolated = Math.round(s1 * (1 - frac) + s2 * frac);
+
+    out.writeInt16LE(interpolated, i * 2);
+  }
+
+  return out;
+}
