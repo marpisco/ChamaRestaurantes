@@ -50,3 +50,21 @@ test('AudioChunkBuffer flushes a buffered 50ms+ partial chunk when streaming bec
   assert.equal(chunks[0].length, 1280);
   assert.equal(buffer.pendingBytes(), 0);
 });
+
+test('AudioChunkBuffer can prepend a failed chunk without losing order', () => {
+  const buffer = new AudioChunkBuffer(1600, 800);
+  const first = Buffer.alloc(320, 1);
+  const second = Buffer.alloc(320, 2);
+  const failed = Buffer.alloc(320, 9);
+
+  buffer.push(first);
+  buffer.push(second);
+  buffer.prepend(failed);
+
+  const chunk = buffer.flushPendingChunk();
+
+  assert.notEqual(chunk, null);
+  assert.equal(chunk?.subarray(0, 320).every((byte) => byte === 9), true);
+  assert.equal(chunk?.subarray(320, 640).every((byte) => byte === 1), true);
+  assert.equal(chunk?.subarray(640, 960).every((byte) => byte === 2), true);
+});
