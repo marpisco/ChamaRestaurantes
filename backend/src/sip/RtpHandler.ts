@@ -76,6 +76,18 @@ export class RtpHandler extends EventEmitter {
     }
   }
 
+  /**
+   * Stop any queued outgoing audio immediately.
+   * Already-sent RTP packets cannot be recalled, but pending frames are dropped.
+   */
+  stopOutgoing(): void {
+    this.sendQueue = [];
+    if (this.sendTimer) {
+      clearInterval(this.sendTimer);
+      this.sendTimer = null;
+    }
+  }
+
   private drainQueue(): void {
     if (this.sendQueue.length === 0) {
       clearInterval(this.sendTimer!);
