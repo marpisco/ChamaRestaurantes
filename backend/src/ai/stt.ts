@@ -35,6 +35,15 @@ export class AudioChunkBuffer {
     return ready;
   }
 
+  drainChunksWhenStreamBecomesReady(): Buffer[] {
+    const chunks = this.drainReadyChunks();
+    const trailingChunk = this.flushPendingChunk();
+    if (trailingChunk) {
+      chunks.push(trailingChunk);
+    }
+    return chunks;
+  }
+
   flushPendingChunk(): Buffer | null {
     if (this.bufferedBytes < this.minimumFlushBytes) return null;
     return this.takeBytes(this.bufferedBytes);
@@ -108,7 +117,7 @@ export class StreamingTranscriber extends EventEmitter {
       this.resetFlushTimer();
 
       if (!this.isConnected) {
-        void this.connect().then(() => this.drainBufferedAudio()).catch((err) => {
+        void this.connect().then(() => this.drainBufferedAudioAfterConnect()).catch((err) => {
           this.emit('error', err as Error);
         });
         return;
@@ -190,6 +199,15 @@ export class StreamingTranscriber extends EventEmitter {
 
     const readyChunks = this.chunkBuffer.drainReadyChunks();
     for (const chunk of readyChunks) {
+      this.sendChunk(chunk);
+    }
+  }
+
+  private drainBufferedAudioAfterConnect(): void {
+    if (!this.isConnected) return;
+
+    const chunks = this.chunkBuffer.drainChunksWhenStreamBecomesReady();
+    for (const chunk of chunks) {
       this.sendChunk(chunk);
     }
   }
