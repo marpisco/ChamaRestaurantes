@@ -25,6 +25,11 @@ export class AudioChunkBuffer {
     this.bufferedBytes += chunk.length;
   }
 
+  prepend(chunk: Buffer): void {
+    this.chunks.unshift(chunk);
+    this.bufferedBytes += chunk.length;
+  }
+
   drainReadyChunks(): Buffer[] {
     const ready: Buffer[] = [];
 
@@ -199,7 +204,7 @@ export class StreamingTranscriber extends EventEmitter {
 
     const readyChunks = this.chunkBuffer.drainReadyChunks();
     for (const chunk of readyChunks) {
-      this.sendChunk(chunk);
+      if (!this.trySendChunk(chunk)) return;
     }
   }
 
@@ -208,7 +213,7 @@ export class StreamingTranscriber extends EventEmitter {
 
     const chunks = this.chunkBuffer.drainChunksWhenStreamBecomesReady();
     for (const chunk of chunks) {
-      this.sendChunk(chunk);
+      if (!this.trySendChunk(chunk)) return;
     }
   }
 
@@ -216,7 +221,7 @@ export class StreamingTranscriber extends EventEmitter {
     if (!this.isConnected || this.isClosing) return;
     const chunk = this.chunkBuffer.flushPendingChunk();
     if (!chunk) return;
-    this.sendChunk(chunk);
+    this.trySendChunk(chunk);
   }
 
   private resetFlushTimer(): void {
@@ -229,14 +234,33 @@ export class StreamingTranscriber extends EventEmitter {
     }, FLUSH_DELAY_MS);
   }
 
-  private sendChunk(pcm8k: Buffer): void {
-    if (!this.transcriber) return;
+  private trySendChunk(pcm8k: Buffer): boolean {
+    if (!this.transcriber) return false;
 
-    const pcm16k = upsample(pcm8k, 8000, 16000);
-    const audio = pcm16k.buffer.slice(
-      pcm16k.byteOffset,
-      pcm16k.byteOffset + pcm16k.byteLength,
-    );
-    this.transcriber.sendAudio(audio);
+    try {
+      const pcm16k = upsample(pcm8k, 8000, 16000);
+      const audio = pcm16k.buffer.slice(
+        pcm16k.byteOffset,
+        pcm16k.byteOffset + pcm16k.byteLength,
+      );
+      this.transcriber.sendAudio(audio);
+      return true;
+    } catch (err) {
+      const error = err as Error;
+
+      if (error.message.includes('Socket is not open for communication')) {
+        this.chunkBuffer.prepend(pcm8k);
+        this.isConnected = false;
+        console.warn('[AssemblyAI STT] Socket closed while sending audio; requeueing chunk and reconnecting');
+        void this.connect().then(() => this.drainBufferedAudioAfterConnect()).catch((connectErr) => {
+          this.emit('error', connectErr as Error);
+        });
+        return false;
+      }
+
+      console.error('[AssemblyAI STT] Failed to stream audio chunk:', err);
+      this.emit('error', error);
+      return false;
+    }
   }
 }
