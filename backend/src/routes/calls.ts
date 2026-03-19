@@ -7,6 +7,7 @@ import { RtpHandler } from '../sip/RtpHandler';
 import { AudioPipeline } from '../audio/AudioPipeline';
 import type { CallRecord, CallRequest, WsMessage } from '../types';
 import { parseCallRequest } from './callRequest';
+import { createSingleHangup } from './hangup';
 
 export const calls = new Map<string, CallRecord>();
 
@@ -90,12 +91,27 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
   const rtpPort = await RtpHandler.allocatePort();
   const rtp = new RtpHandler(rtpPort);
   let pipeline: AudioPipeline | null = null;
+  let dialogEstablished = false;
+  let remoteHangup = false;
+  let ending = false;
+  const requestLocalHangup = createSingleHangup(async () => {
+    await sip.bye().catch(() => {});
+  });
 
   let resolveCall!: () => void;
   const callEnded = new Promise<void>((r) => { resolveCall = r; });
 
-  const endCall = (result?: CallRecord['result']) => {
-    if (record.status === 'ended') return;
+  const endCall = async (
+    result?: CallRecord['result'],
+    options: { sendHangup?: boolean } = {},
+  ): Promise<void> => {
+    if (ending || record.status === 'ended') return;
+    ending = true;
+
+    if (options.sendHangup !== false && dialogEstablished && !remoteHangup) {
+      await requestLocalHangup();
+    }
+
     if (result) record.result = result;
     record.endedAt = new Date();
     setStatus('ended');
@@ -104,7 +120,9 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     resolveCall();
   };
 
-  record.hangup = () => endCall();
+  record.hangup = () => {
+    void endCall(undefined, { sendHangup: true });
+  };
 
   try {
     console.log(`[call ${id}] a ligar sockets (RTP :${rtpPort})`);
@@ -123,11 +141,16 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     const sdp = await sip.invite(record.phone, rtpPort);
     console.log(`[call ${id}] chamada atendida, RTP remoto: ${sdp.ip}:${sdp.port}`);
     rtp.setRemote(sdp.ip, sdp.port);
+    dialogEstablished = true;
     setStatus('connected');
 
     sip.once('remote_bye', () => {
       console.log(`[call ${id}] restaurante desligou`);
-      endCall({ success: false, summary: 'O restaurante desligou a chamada.' });
+      remoteHangup = true;
+      void endCall(
+        { success: false, summary: 'O restaurante desligou a chamada.' },
+        { sendHangup: false },
+      );
     });
 
     pipeline = new AudioPipeline(rtp, record.prompt);
@@ -142,12 +165,12 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     });
 
     pipeline.on('outcome', (outcome: 'confirmed' | 'rejected') => {
-      endCall({
+      void endCall({
         success: outcome === 'confirmed',
         summary: outcome === 'confirmed'
           ? 'Reserva confirmada.'
           : 'O restaurante nao conseguiu aceitar a reserva.',
-      });
+      }, { sendHangup: true });
     });
 
     pipeline.on('error', (err: Error) => {
@@ -158,7 +181,9 @@ async function runCall(id: string, record: CallRecord, wss: WebSocketServer): Pr
     await callEnded;
   } finally {
     record.hangup = undefined;
-    await sip.bye().catch(() => {});
+    if (dialogEstablished && !remoteHangup && record.status !== 'ended') {
+      await requestLocalHangup();
+    }
     sip.destroy();
     rtp.destroy();
     console.log(`[call ${id}] sockets fechados`);
