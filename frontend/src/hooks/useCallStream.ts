@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { resolveWebSocketUrl } from './wsUrl';
 
 export type WsEvent =
   | { type: 'call.status'; callId: string; payload: { status: string; error?: string; } }
@@ -51,10 +52,7 @@ export function useCallStream(onEvent: EventHandler, playAudio: boolean) {
   }, []);
 
   useEffect(() => {
-    // In dev, connect directly to the backend to avoid Vite's WS proxy issues with binary frames.
-    // VITE_WS_URL is set in .env.development; in production the build serves everything together.
-    const url = import.meta.env.VITE_WS_URL ||
-      `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+    const url = resolveWebSocketUrl(import.meta.env, window.location);
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.binaryType = 'arraybuffer';
