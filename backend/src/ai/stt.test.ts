@@ -34,3 +34,19 @@ test('AudioChunkBuffer flushes trailing audio once it reaches the minimum 50ms s
   assert.equal(chunk?.length, 960);
   assert.equal(buffer.pendingBytes(), 0);
 });
+
+test('AudioChunkBuffer flushes a buffered 50ms+ partial chunk when streaming becomes ready', () => {
+  const buffer = new AudioChunkBuffer(1600, 800);
+  const frame = Buffer.alloc(320);
+
+  buffer.push(frame);
+  buffer.push(frame);
+  buffer.push(frame);
+  buffer.push(frame);
+
+  const chunks = buffer.drainChunksWhenStreamBecomesReady();
+
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].length, 1280);
+  assert.equal(buffer.pendingBytes(), 0);
+});
